@@ -58,7 +58,7 @@ function AuditLoginWithErrors {
         [PSCustomObject]@{ ErrorCode = 16001; Title = "Seleção de conta inválida"; Description = "O usuário selecionou uma sessão rejeitada. Pode recuperar escolhendo outra conta." },
         [PSCustomObject]@{ ErrorCode = 16002; Title = "Seleção de sessão do aplicativo inválida"; Description = "O requisito SID especificado pelo aplicativo não foi atendido." },
         [PSCustomObject]@{ ErrorCode = 160021; Title = "Sessão solicitada pelo aplicativo não existe"; Description = "A aplicação solicitou uma sessão de usuário inexistente. Crie uma nova conta Azure para resolver." },
-        [PSCustomObject]@{ ErrorCode = 16003; Title = "Conta do usuário SSO não encontrada no locatário do recurso"; Description = "O locatário do recurso (ou seja, a conta Microsoft que gerencia o SharePoint Online acessado) não reconhece o usuário $($login.UserPrincipalName) como um usuário interno ou convidado (B2B)." },
+        [PSCustomObject]@{ ErrorCode = 16003; Title = "Conta do usuário SSO não encontrada no locatário do recurso"; Description = "A conta Microsoft que gerencia o SharePoint Online acessado não reconhece o usuário $($login.UserPrincipalName) como um usuário interno ou convidado (B2B)." },
         [PSCustomObject]@{ ErrorCode = 17003; Title = "Falha no provisionamento da chave de credencial"; Description = "Microsoft Entra ID não conseguiu provisionar a chave do usuário." },
         
         [PSCustomObject]@{ ErrorCode = 20001; Title = "Erro na resposta WsFed SignIn"; Description = "Problema com o provedor de identidade federado. Contate seu IDP." },
