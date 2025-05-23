@@ -203,7 +203,7 @@ function Main {
     Write-Host ""
     Write-Host "╔════════════════════════════════════════════════════════════════════╗" -ForegroundColor Cyan
     Write-Host "║              🪟 Microsoft Entra ID - Últimos Logins                ║" -ForegroundColor Cyan
-    Write-Host "║--------------------------------------------------------------      ║" -ForegroundColor Cyan
+    Write-Host "║--------------------------------------------------------------------║" -ForegroundColor Cyan
     Write-Host "║ Autor      : Natan Felipe de Oliveira                              ║" -ForegroundColor Cyan
     Write-Host "║ Descrição  : Mostra os últimos logins indicando o serviço acessado ║" -ForegroundColor Cyan
     Write-Host "╚════════════════════════════════════════════════════════════════════╝" -ForegroundColor Cyan
@@ -245,7 +245,13 @@ function Main {
 }
 
 try {
+    $start = Get-Date
+
     Main
+
+    $end = Get-Date
+    $time = $end - $start
+    Write-Host "Tempo: $($time.Hours):$($time.Minutes):$($time.Seconds)"
 }
 catch {
     Write-Host "❌ Ocorreu um erro inesperado: $($_.Exception.Message)" -ForegroundColor Red
