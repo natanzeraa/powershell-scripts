@@ -57,7 +57,7 @@ function Get-UsersWithCreationDate {
                     Name                       = $fullUser.DisplayName
                     Mail                       = $fullUSer.Mail
                     UPN                        = $fullUser.UserPrincipalName
-                    CreatedDateTime            = $fullUser.CreatedDateTime
+                    CreatedDateTime            = $fullUser.CreatedDateTime.ToLocalTime()
                     LastPasswordChangeDateTime = $fullUser.LastPasswordChangeDateTime.ToLocalTime()
                     AccountEnabled             = $fullUser.AccountEnabled ? "Sim" : "Não"
                     UserType                   = if ($fullUser.UserType -eq "Guest") { "Convidado" } else { "Membro" }
