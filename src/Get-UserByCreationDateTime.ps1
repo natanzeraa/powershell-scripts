@@ -67,7 +67,7 @@ function Get-UsersWithCreationDate {
         catch {
             Write-Host "❌ Erro ao buscar usuário com e-mail '$userMail': $_" -ForegroundColor Yellow
         }
-    } Write-Host "`nUsuários criados/convidados entre $startDateObj e $endDateObj`n" -ForeGroundColor Green
+    } Write-Host "`nUsuários criados/convidados entre $(($startDateObj).ToString("dd/MM/yyyy HH:mm:ss")) e $(($endDateObj).ToString("dd/MM/yyyy  HH:mm:ss"))`n" -ForeGroundColor Green
 
     return $results
 }
@@ -88,8 +88,6 @@ function Main {
     Write-Host "🔄 Conectando ao Microsoft Entra ID..."
     Connect-MgGraph -Scopes "User.Read.All" -NoWelcome
     Write-Host "✅ Conectado com sucesso!`n"
-
-    $start = Get-Date
 
     $startDateObj = Get-ValidDate "📅 Insira a data de início (dd-MM-yyyy)"
 
@@ -126,12 +124,18 @@ function Main {
     }
 
     $table | Format-Table -AutoSize
-
-    $end = Get-Date
-
-    $time = $end - $start
-
-    Write-Host "Tempo: $($time.Hours):$($time.Minutes):$($time.Seconds)"
 }
 
-Main
+try {
+    $start = Get-Date
+
+    Main
+
+    $end = Get-Date
+    $time = $end - $start
+    Write-Host "Tempo: $($time.Hours):$($time.Minutes):$($time.Seconds)"
+}
+catch {
+    Write-Host "❌ Ocorreu um erro inesperado: $($_.Exception.Message)" -ForegroundColor Red
+    exit 1
+}
