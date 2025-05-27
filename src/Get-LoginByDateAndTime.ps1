@@ -1,21 +1,64 @@
-function Show-Progress($curr, $total) {
+function ShowProgressBar {
+    param(
+        [Parameter(Mandatory)]
+        $Current,
+        [Parameter(Mandatory)]
+        $Total
+    )
+
     Write-Progress -Activity "Buscando logins mais recentes..." `
-        -Status "Aguarde: $curr de $total ($([Math]::Round(($curr / $total) * 100))%)" `
-        -PercentComplete (($curr / $total) * 100)
+        -Status "Aguarde: $($Current) de $($Total) ($([Math]::Round(($Current / $Total) * 100))%)" `
+        -PercentComplete (($Current / $Total) * 100)
+    Start-Sleep -Milliseconds 1
 }
 
-function Get-RecentLogins {
+function ParseDateTime {
+    param (
+        [Parameter(Mandatory)]
+        [string]$dateString
+    )
+
+    try {
+        $date = [datetime]::ParseExact($dateString, "dd/MM/yyyy", $null)
+        return $date
+    }
+    catch {
+        Write-Host "❌ Data inválida: $dateString. Use o formato dd/MM/yyyy."
+        exit 1
+    }
+}
+
+function GetDateAndTimeFromUser {
+    param (
+        [Parameter(Mandatory)]
+        [datetime]$inputDate
+    )
+
+    $now = Get-Date
+
+    if ($inputDate.Date -eq $now.Date) {
+        $start = $inputDate.Date
+        $end = $now
+    }
+    else {
+        $start = $inputDate.Date
+        $end = $inputDate.Date.AddDays(1).AddSeconds(-1)
+    }
+
+    return $start, $end
+}
+
+function GetRecentLogins {
     param (
         [Parameter(Mandatory)]
         [datetime]$date
     )
+    
+    $start, $end = GetDateAndTimeFromUser -inputDate $date
 
-    Write-Host "🔍 Buscando logins entre $($date.ToString('HH:mm:ss')) de $($date.ToString('dd/MM/yyyy')) e $($date.AddDays(1).ToString('HH:mm:ss')) de $($date.AddDays(1).ToString('dd/MM/yyyy'))"
+    Write-Host "🔍 Buscando logins entre $($start.ToString("dd/MM/yyyy HH:mm:ss")) e $($end.ToString("dd/MM/yyyy HH:mm:ss"))"
 
-    $start = ($date).ToString("yyyy-MM-ddTHH:mm:ssZ")
-    $end = ($date.AddDays(1)).ToString("yyyy-MM-ddTHH:mm:ssZ")
-
-    $logins = Get-MgAuditLogSignIn -Filter "createdDateTime ge $start and createdDateTime lt $end" `
+    $logins = Get-MgAuditLogSignIn -Filter "createdDateTime ge $($start.ToString("yyyy-MM-ddTHH:mm:ssZ")) and createdDateTime lt $($end.ToString("yyyy-MM-ddTHH:mm:ssZ"))" `
         -Property UserDisplayName, UserPrincipalName, CreatedDateTime, Status, ResourceDisplayName, IPAddress `
         -All
     
@@ -24,12 +67,9 @@ function Get-RecentLogins {
     $results = @()
     $errors = @()
     $i = 0
-    $loginCount = $logins.Count
 
     foreach ($login in $logins) {
         $i++
-        Show-Progress -curr $i -total $loginCount
-
         try {
             $results += [PSCustomObject]@{
                 UserDisplayName     = $login.UserDisplayName
@@ -48,7 +88,6 @@ function Get-RecentLogins {
 
     return $results
 }
-
 
 function AuditLoginWithErrors {
     param(
@@ -130,6 +169,7 @@ function AuditLoginWithErrors {
         [PSCustomObject]@{ ErrorCode = 650056; Title = "Aplicação mal configurada"; Description = "Pode ser porque o cliente não listou permissões para '{name}', ou o administrador não consentiu no locatário, ou identificador do app está errado, ou certificado inválido. Contate o admin para corrigir a configuração ou consentir pelo locatário." },
         [PSCustomObject]@{ ErrorCode = 650057; Title = "Recurso inválido"; Description = "O cliente pediu acesso a um recurso que não está listado nas permissões requisitadas no registro do app. IDs e nomes dos apps e recursos são listados para referência." },
         [PSCustomObject]@{ ErrorCode = 67003; Title = "Ator não é identidade de serviço válida"; Description = "A identidade solicitante não é uma identidade de serviço válida." }
+        [PSCustomObject]@{ ErrorCode = 650053; Title = "Escopo inválido"; Description = "O aplicativo solicitou um escopo que não existe ou não está disponível para o recurso alvo. Verifique se os escopos e recursos na solicitação de autenticação estão corretos." }
         
         [PSCustomObject]@{ ErrorCode = 700016; Title = "Cliente não suportado"; Description = "Tentativa de login via cliente ou app bloqueado pelas políticas" },
         [PSCustomObject]@{ ErrorCode = 7000218; Title = "Senha incorreta"; Description = "Senha digitada incorretamente durante o login" },
@@ -171,7 +211,6 @@ function AuditLoginWithErrors {
         
         [PSCustomObject]@{ ErrorCode = 81010; Title = "Conta bloqueada pelo Identity Protection"; Description = "Login suspeito ou risco identificado pelo Microsoft Entra" },
         [PSCustomObject]@{ ErrorCode = 81012; Title = "Risco de login"; Description = "Login considerado arriscado e bloqueado pelo Identity Protection" },
-
         [PSCustomObject]@{ ErrorCode = 80001; Title = "Armazenamento Local Indisponível"; Description = "O Agente de Autenticação não consegue se conectar ao Active Directory. Verifique se os servidores estão no mesmo domínio que os usuários e se há conectividade." }
         [PSCustomObject]@{ ErrorCode = 80002; Title = "Tempo Esgotado na Validação de Senha"; Description = "A solicitação de validação de senha expirou. Verifique se o Active Directory está acessível e respondendo aos agentes." }
         [PSCustomObject]@{ ErrorCode = 80005; Title = "Erro Web Imprevisível"; Description = "Erro desconhecido ao processar a resposta do Agente de Autenticação. Tente novamente. Se persistir, abra um chamado de suporte." }
@@ -197,7 +236,7 @@ function AuditLoginWithErrors {
     foreach ($login in $loginList) {
         $matched = $MSErrors | Where-Object { $_.ErrorCode -eq $login.ErrorCode }
 
-        if( $login.ErrorCode -eq 0 ) {
+        if ( $login.ErrorCode -eq 0 ) {
             continue
         }
 
@@ -230,24 +269,17 @@ function Main {
     Connect-MgGraph -Scopes "AuditLog.Read.All"  -NoWelcome
     Write-Host "✅ Conectado com sucesso!`n"
 
-    # [int]$rankingCount = Read-Host "🔵 Nº de resultados (vazio para todos)"
     $date = Read-Host "🗓️ Data de início (dd/MM/yyyy)"
 
-    try {
-        $parsedDate = [datetime]::ParseExact($date, "dd/MM/yyyy", $null)
-    }
-    catch {
-        Write-Host "❌ Data inválida. Use o formato dd/MM/yyyy." -ForegroundColor Red
-        return
-    }
+    $parsedDatetime = ParseDateTime -dateString $date
 
-    $loginResults = Get-RecentLogins -date $parsedDate
+    $loginResults = GetRecentLogins -date $parsedDatetime
 
     if ($loginResults.Count -eq 0) {
         Write-Host "Nenhum login encontrado para a data especificada." -ForegroundColor Yellow
         return
     }
-    
+
     $rankedOutput = $loginResults | ForEach-Object -Begin { $i = 1 } -Process {
         [PSCustomObject]@{
             Rank            = $i
@@ -259,12 +291,12 @@ function Main {
             "IP"            = $_.IPAddress
         }
         $i++
+        ShowProgressBar -Current $i -Total $loginResults.Count
     }
 
     $rankedOutput | Format-Table -AutoSize
     
     $errorLogs = AuditLoginWithErrors -login $loginResults
-    
     
     $dateObj = Get-Date
     $dateStr = $dateObj.ToString("ddMMyyyy_HHmmss") 
@@ -281,9 +313,7 @@ function Main {
 
 try {
     $start = Get-Date
-
     Main
-
     $end = Get-Date
     $time = $end - $start
     Write-Host "Tempo: $($time.Hours):$($time.Minutes):$($time.Seconds)"
