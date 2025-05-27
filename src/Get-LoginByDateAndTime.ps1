@@ -1,11 +1,4 @@
-function Show-Progress {
-    param (
-        [Parameter(Mandatory)]
-        $curr,
-        [Parameter(Mandatory)]
-        $total
-    )
-
+function Show-Progress($curr, $total) {
     Write-Progress -Activity "Buscando logins mais recentes..." `
         -Status "Aguarde: $curr de $total ($([Math]::Round(($curr / $total) * 100))%)" `
         -PercentComplete (($curr / $total) * 100)
@@ -14,10 +7,19 @@ function Show-Progress {
 function Get-RecentLogins {
     param (
         [Parameter(Mandatory)]
-        [int]$rankingCount
+        [datetime]$date
     )
 
-    $logins = Get-MgAuditLogSignIn -Top $rankingCount
+    Write-Host "🔍 Buscando logins entre $($date.ToString('HH:mm:ss')) de $($date.ToString('dd/MM/yyyy')) e $($date.AddDays(1).ToString('HH:mm:ss')) de $($date.AddDays(1).ToString('dd/MM/yyyy'))"
+
+    $start = ($date).ToString("yyyy-MM-ddTHH:mm:ssZ")
+    $end = ($date.AddDays(1)).ToString("yyyy-MM-ddTHH:mm:ssZ")
+
+    $logins = Get-MgAuditLogSignIn -Filter "createdDateTime ge $start and createdDateTime lt $end" `
+        -Property UserDisplayName, UserPrincipalName, CreatedDateTime, Status, ResourceDisplayName, IPAddress `
+        -All
+    
+    Write-Host $($logins.Count -gt 0 ? "🟢 Encontrados $($logins.Count)" : "❌ Nenhum resultado encontrado")
 
     $results = @()
     $errors = @()
@@ -47,13 +49,14 @@ function Get-RecentLogins {
     return $results
 }
 
+
 function AuditLoginWithErrors {
     param(
         [Parameter(Mandatory)]
-        $login
+        $loginList
     )
 
-    $MSEntraIStatusCodes = @(
+    $MSErrors = @(
         [PSCustomObject]@{ ErrorCode = 16000; Title = "Interação necessária"; Description = "Conta do usuário não existe no locatário. Precisa ser adicionada como usuário externo primeiro." },
         [PSCustomObject]@{ ErrorCode = 16001; Title = "Seleção de conta inválida"; Description = "O usuário selecionou uma sessão rejeitada. Pode recuperar escolhendo outra conta." },
         [PSCustomObject]@{ ErrorCode = 16002; Title = "Seleção de sessão do aplicativo inválida"; Description = "O requisito SID especificado pelo aplicativo não foi atendido." },
@@ -189,13 +192,27 @@ function AuditLoginWithErrors {
         [PSCustomObject]@{ ErrorCode = 90025; Title = "Erro interno de serviço"; Description = "Serviço interno da Microsoft Entra atingiu seu limite de tentativas de login" }
     )
 
-    $matched = $MSEntraIStatusCodes | Where-Object { $_.ErrorCode -eq $login.ErrorCode }
+    $errorLogs = @()
 
-    if (!$matched) {
-        Write-Host "❌ $($login.UserDisplayName) <$($login.UserPrincipalName)> tentou acessar '$($login.ResourceDisplayName)' em $($login.CreatedDateTime) a partir do IP $($login.IPAddress) — Resultado: $($login.Status) ($($login.StatusCode) - Código desconhecido)"
+    foreach ($login in $loginList) {
+        $matched = $MSErrors | Where-Object { $_.ErrorCode -eq $login.ErrorCode }
+
+        if( $login.ErrorCode -eq 0 ) {
+            continue
+        }
+
+        $errorLogs += [PSCustomObject]@{
+            UserDisplayName     = $login.UserDisplayName
+            UserPrincipalName   = $login.UserPrincipalName
+            ResourceDisplayName = $login.ResourceDisplayName
+            CreatedDateTime     = $login.CreatedDateTime
+            IPAddress           = $login.IPAddress
+            ErrorCode           = $login.ErrorCode
+            Description         = if ($matched) { "$($matched.Title) : $($matched.Description)" } else { "Código desconhecido" }
+        }
     }
     
-    Write-Host "❌ $($login.UserDisplayName) <$($login.UserPrincipalName)> tentou acessar '$($login.ResourceDisplayName)' em $($login.CreatedDateTime) a partir do IP $($login.IPAddress) — Resultado: $($login.Status) ($($login.StatusCode) - $($matched.Title): $($matched.Description))"
+    return $errorLogs
 }
 
 function Main {
@@ -213,35 +230,53 @@ function Main {
     Connect-MgGraph -Scopes "AuditLog.Read.All"  -NoWelcome
     Write-Host "✅ Conectado com sucesso!`n"
 
-    [int]$rankingCount = Read-Host "Quantos resultados deseja visualizar no ranking"
+    # [int]$rankingCount = Read-Host "🔵 Nº de resultados (vazio para todos)"
+    $date = Read-Host "🗓️ Data de início (dd/MM/yyyy)"
 
-    if (-not $rankingCount -or $rankingCount -lt 1) {
-        Write-Host "❌ Insira um valor maior que 0!" -ForegroundColor Red
-        exit 1
+    try {
+        $parsedDate = [datetime]::ParseExact($date, "dd/MM/yyyy", $null)
+    }
+    catch {
+        Write-Host "❌ Data inválida. Use o formato dd/MM/yyyy." -ForegroundColor Red
+        return
     }
 
-    $loginResults = Get-RecentLogins -rankingCount $rankingCount
+    $loginResults = Get-RecentLogins -date $parsedDate
+
+    if ($loginResults.Count -eq 0) {
+        Write-Host "Nenhum login encontrado para a data especificada." -ForegroundColor Yellow
+        return
+    }
     
-    $rankedOutput = $loginResults | Select-Object -First $rankingCount | ForEach-Object -Begin { $i = 1 } -Process {
+    $rankedOutput = $loginResults | ForEach-Object -Begin { $i = 1 } -Process {
         [PSCustomObject]@{
-            Rank           = $i
-            "Nome"         = $_.UserDisplayName
-            "UPN"          = $_.UserPrincipalName
-            "Último login" = $_.CreatedDateTime
-            "Status"       = $_.Status
-            "App usado"    = $_.ResourceDisplayName
-            "IP"           = $_.IPAddress
+            Rank            = $i
+            "Nome"          = $_.UserDisplayName
+            "UPN"           = $_.UserPrincipalName
+            "Último login"  = $_.CreatedDateTime
+            "Status"        = $_.Status
+            "App utilizado" = $_.ResourceDisplayName
+            "IP"            = $_.IPAddress
         }
         $i++
     }
 
     $rankedOutput | Format-Table -AutoSize
     
-    foreach ($result in $loginResults) {
-        if ($result.ErrorCode -ne 0) {
-            AuditLoginWithErrors -login $result
-        }
+    $errorLogs = AuditLoginWithErrors -login $loginResults
+    
+    
+    $dateObj = Get-Date
+    $dateStr = $dateObj.ToString("ddMMyyyy_HHmmss") 
+    $csvDir = Join-Path $PSScriptRoot "..\output"
+    
+    if (-not (Test-Path $csvDir)) { 
+        New-Item -Path $csvDir -ItemType Directory | Out-Null 
     }
+
+    $csvPath = Join-Path $csvDir "$($dateStr)_login_errors.csv"
+    $errorLogs | Export-Csv -Path $csvPath -NoTypeInformation -Encoding utf8
+    Write-Host "🔄 Exportando erros para CSV: $csvPath" -ForegroundColor Green
 }
 
 try {
@@ -254,6 +289,7 @@ try {
     Write-Host "Tempo: $($time.Hours):$($time.Minutes):$($time.Seconds)"
 }
 catch {
-    Write-Host "❌ Ocorreu um erro inesperado: $($_.Exception.Message)" -ForegroundColor Red
+    Write-Host "❌ Erro: $($_.Exception.Message)`n" -ForegroundColor DarkRed
+    Write-Host "❌ Detalhes: $($_.ErrorDetails.RecommendedAction)`n" -ForegroundColor DarkRed
     exit 1
 }
