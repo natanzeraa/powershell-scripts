@@ -37,12 +37,12 @@ function GetDateAndTimeFromUser {
     $now = Get-Date
 
     if ($inputDate.Date -eq $now.Date) {
-        $start = $inputDate.Date
-        $end = $now
+        $start = $inputDate.Date.ToUniversalTime()
+        $end = $now.ToUniversalTime()
     }
     else {
-        $start = $inputDate.Date
-        $end = $inputDate.Date.AddDays(1).AddSeconds(-1)
+        $start = $inputDate.Date.ToUniversalTime()
+        $end = $inputDate.Date.AddDays(1).AddSeconds(-1).ToUniversalTime()
     }
 
     return $start, $end
@@ -290,8 +290,8 @@ function Main {
             "App utilizado" = $_.ResourceDisplayName
             "IP"            = $_.IPAddress
         }
-        $i++
         ShowProgressBar -Current $i -Total $loginResults.Count
+        $i++
     }
 
     $rankedOutput | Format-Table -AutoSize
