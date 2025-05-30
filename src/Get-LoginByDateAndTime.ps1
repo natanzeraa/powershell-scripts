@@ -56,7 +56,7 @@ function GetRecentLogins {
     
     $start, $end = GetDateAndTimeFromUser -inputDate $date
 
-    Write-Host "🔍 Buscando logins entre $($start.ToString("dd/MM/yyyy HH:mm:ss")) e $($end.ToString("dd/MM/yyyy HH:mm:ss"))"
+    Write-Host "🔍 Buscando logins entre $($start.ToString("dd/MM/yyyy HH:mm:ss")) UTC e $($end.ToString("dd/MM/yyyy HH:mm:ss")) UTC"
 
     $logins = Get-MgAuditLogSignIn -Filter "createdDateTime ge $($start.ToString("yyyy-MM-ddTHH:mm:ssZ")) and createdDateTime lt $($end.ToString("yyyy-MM-ddTHH:mm:ssZ"))" `
         -Property UserDisplayName, UserPrincipalName, CreatedDateTime, Status, ResourceDisplayName, IPAddress `
