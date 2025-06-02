@@ -12,6 +12,17 @@ function ShowProgressBar {
   Start-Sleep -Milliseconds 50
 }
 
+function Normalize-FileName {
+  param([string]$input)
+
+  $normalized = $input.Normalize([System.Text.NormalizationForm]::FormD)
+  $asciiOnly = -join ($normalized.ToCharArray() | Where-Object {
+    [System.Globalization.CharUnicodeInfo]::GetUnicodeCategory($_) -ne 'NonSpacingMark'
+  })
+
+  return $asciiOnly.ToLower() -replace '[^a-z0-9]+', '_'
+}
+
 function GetUsersWithLicenses {
   Write-Host "🔍 Calculando total de usuários..."
   $users = Get-MgUser -All
@@ -41,30 +52,57 @@ function GetUsersWithLicenses {
     $userLicenses = @()
     if ($user.assignedLicenses) {
       foreach ($assigned in $user.assignedLicenses) {
-        $licenseMatch = $licenses | Where-Object { ($_.SkuId.ToString()).ToLower() -eq ($assigned.skuId.ToString()).ToLower() }
+        $licenseMatch = $licenses | Where-Object {
+          ($_.SkuId.ToString()).ToLower() -eq ($assigned.skuId.ToString()).ToLower()
+        }
         if ($licenseMatch) {
           $userLicenses += $licenseMatch.SkuPartNumber
         }
       }
     }
 
-    if ($userLicenses.Count -gt 0) {
-      $withLicenses += [PSCustomObject]@{
-        DisplayName       = $user.DisplayName
-        UserPrincipalName = $user.UserPrincipalName
-        Licenses          = $userLicenses -join ", "
-      }
+    $userObject = [PSCustomObject]@{
+      DisplayName       = $user.DisplayName
+      UserPrincipalName = $user.UserPrincipalName
+      Licenses          = if ($userLicenses.Count -gt 0) { $userLicenses -join ", " } else { "UNLICENSED" }
     }
-    else {
-      $withoutLicenses += [PSCustomObject]@{
-        DisplayName       = $user.DisplayName
-        UserPrincipalName = $user.UserPrincipalName
-        Licenses          = "UNLICENSED"
-      }
+
+    if ($userLicenses.Count -gt 0) {
+      $withLicenses += $userObject
+    } else {
+      $withoutLicenses += $userObject
     }
   }
 
   return $withLicenses, $withoutLicenses
+}
+
+function ConnectToTenant {
+  try {
+    $mgContext = Get-MgContext
+
+    if (-not $mgContext.Account) {
+      Connect-MgGraph -Scopes "User.Read.All", "Directory.Read.All" -NoWelcome
+    }
+    else {
+      $org = Get-MgOrganization
+      Write-Host "🔄 Já conectado ao tenant: $($org.DisplayName)" -ForegroundColor Yellow
+      $choice = Read-Host "Deseja reconectar? (S/N)"
+
+      if ($choice.Trim().ToLower() -eq "s") {
+        Disconnect-MgGraph
+        Connect-MgGraph -Scopes "User.Read.All", "Directory.Read.All" -NoWelcome
+      }
+    }
+
+    $org = Get-MgOrganization
+    Write-Host "✅ Conectado ao tenant: $($org.DisplayName)" -ForegroundColor Green
+    return $true
+  }
+  catch {
+    Write-Host "❌ Erro ao conectar ao tenant: $($_.Exception.Message)" -ForegroundColor DarkRed
+    return $false
+  }
 }
 
 function Main {
@@ -76,10 +114,12 @@ function Main {
   Write-Host "║ Autor      : Natan Felipe de Oliveira                              ║" -ForegroundColor Cyan
   Write-Host "║ Descrição  : Mostra os usuários com base na licença requerida      ║" -ForegroundColor Cyan
   Write-Host "╚════════════════════════════════════════════════════════════════════╝" -ForegroundColor Cyan
-
   Write-Host ""
-  Write-Host "🔄 Conectando ao tenant $((Get-MgOrganization).DisplayName)..."
-  Connect-MgGraph -Scopes "User.Read.All", "Directory.Read.All" -NoWelcome
+
+  if (-not (ConnectToTenant)) {
+    Write-Host "❌ Não foi possível conectar ao tenant. Verifique suas credenciais e permissões." -ForegroundColor DarkRed
+    exit 1
+  }
 
   $usersWithLicenses, $usersWithoutLicenses = GetUsersWithLicenses
 
@@ -87,7 +127,7 @@ function Main {
     Write-Host "Nenhum usuário com licença encontrado." -ForegroundColor Yellow
   }
   else {
-    Write-Host "🔎 Usuários encontrados com licenças:"
+    Write-Host "🔎 Usuários com licenças:"
     $usersWithLicenses | Sort-Object DisplayName | Format-Table -AutoSize
   }
 
@@ -99,33 +139,35 @@ function Main {
     $usersWithoutLicenses | Sort-Object DisplayName | Format-Table -AutoSize
   }
 
-  $dateObj = Get-Date
-  $dateStr = $dateObj.ToString("ddMMyyyy_HHmmss")
+  $dateStr = (Get-Date).ToString("ddMMyyyy_HHmmss")
   $csvDir = Join-Path $PSScriptRoot "..\output"
-    
-  if (-not (Test-Path $csvDir)) { 
-    New-Item -Path $csvDir -ItemType Directory | Out-Null 
+
+  if (-not (Test-Path $csvDir)) {
+    New-Item -Path $csvDir -ItemType Directory | Out-Null
   }
 
-  $usersWithLicensesCsvPath = Join-Path $csvDir "$($dateStr)_users_with_license.csv"
-  $usersWithoutLicensesCsvPath = Join-Path $csvDir "$($dateStr)_users_without_license.csv"
+  $orgName = (Get-MgOrganization).DisplayName
+  $sanitizedOrgName = Normalize-FileName $orgName
+
+  $usersWithLicensesCsvPath = Join-Path $csvDir "${sanitizedOrgName}_${dateStr}_users_with_license.csv"
+  $usersWithoutLicensesCsvPath = Join-Path $csvDir "${sanitizedOrgName}_${dateStr}_users_without_license.csv"
 
   $usersWithLicenses | Export-Csv -Path $usersWithLicensesCsvPath -NoTypeInformation -Encoding utf8
   $usersWithoutLicenses | Export-Csv -Path $usersWithoutLicensesCsvPath -NoTypeInformation -Encoding utf8
-  
-  Write-Host "📊 Total de usuários com licenças: $($usersWithLicenses.Count)" -ForegroundColor Green
-  Write-Host "🔄 Exportando usuários com licença para CSV: $usersWithLicensesCsvPath" -ForegroundColor Yellow
-  
-  Write-Host "`n📊 Total de usuários sem licenças: $($usersWithoutLicenses.Count)" -ForegroundColor Red
-  Write-Host "🔄 Exportando usuários com licença para CSV: $usersWithoutLicensesCsvPath" -ForegroundColor Yellow
+
+  Write-Host "`n📊 Total com licença: $($usersWithLicenses.Count)" -ForegroundColor Green
+  Write-Host "💾 Exportado: $usersWithLicensesCsvPath"
+
+  Write-Host "`n📊 Total sem licença: $($usersWithoutLicenses.Count)" -ForegroundColor Red
+  Write-Host "💾 Exportado: $usersWithoutLicensesCsvPath"
 }
 
 try {
   $start = Get-Date
   Main
   $end = Get-Date
-  $time = $end - $start
-  Write-Host "`n⏱️ Tempo total: $($time.Hours)h $($time.Minutes)m $($time.Seconds)s"
+  $duration = $end - $start
+  Write-Host "`n⏱️ Tempo total: $($duration.Hours)h $($duration.Minutes)m $($duration.Seconds)s"
 }
 catch {
   Write-Host "❌ Erro: $($_.Exception.Message)" -ForegroundColor DarkRed
