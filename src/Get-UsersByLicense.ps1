@@ -100,7 +100,7 @@ function Main {
   Write-Host "║              🪟 Microsoft Entra ID - Usuários por licença          ║" -ForegroundColor Cyan
   Write-Host "║--------------------------------------------------------------------║" -ForegroundColor Cyan
   Write-Host "║ Autor      : Natan Felipe de Oliveira                              ║" -ForegroundColor Cyan
-  Write-Host "║ Descrição  : Mostra os usuários com base na licença requerida      ║" -ForegroundColor Cyan
+  Write-Host "║ Descrição  : Mostra os usuários com e sem licença do Microsoft 365 ║" -ForegroundColor Cyan
   Write-Host "╚════════════════════════════════════════════════════════════════════╝" -ForegroundColor Cyan
   Write-Host ""
 
