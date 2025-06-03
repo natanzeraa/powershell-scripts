@@ -12,13 +12,13 @@ function ShowProgressBar {
   Start-Sleep -Milliseconds 50
 }
 
-function Normalize-FileName {
-  param([string]$input)
+function NormalizeFileName {
+  param([string]$str)
 
-  $normalized = $input.Normalize([System.Text.NormalizationForm]::FormD)
+  $normalized = $str.Normalize([System.Text.NormalizationForm]::FormD)
   $asciiOnly = -join ($normalized.ToCharArray() | Where-Object {
-    [System.Globalization.CharUnicodeInfo]::GetUnicodeCategory($_) -ne 'NonSpacingMark'
-  })
+      [System.Globalization.CharUnicodeInfo]::GetUnicodeCategory($_) -ne 'NonSpacingMark'
+    })
 
   return $asciiOnly.ToLower() -replace '[^a-z0-9]+', '_'
 }
@@ -69,7 +69,8 @@ function GetUsersWithLicenses {
 
     if ($userLicenses.Count -gt 0) {
       $withLicenses += $userObject
-    } else {
+    }
+    else {
       $withoutLicenses += $userObject
     }
   }
@@ -77,31 +78,25 @@ function GetUsersWithLicenses {
   return $withLicenses, $withoutLicenses
 }
 
-function ConnectToTenant {
-  try {
-    $mgContext = Get-MgContext
+function VerifyTenantConnection {
+  $mgContext = Get-MgContext
+  $isConnected = $mgContext.Account
+  $choice = ""
 
-    if (-not $mgContext.Account) {
-      Connect-MgGraph -Scopes "User.Read.All", "Directory.Read.All" -NoWelcome
-    }
-    else {
-      $org = Get-MgOrganization
-      Write-Host "🔄 Já conectado ao tenant: $($org.DisplayName)" -ForegroundColor Yellow
-      $choice = Read-Host "Deseja reconectar? (S/N)"
-
-      if ($choice.Trim().ToLower() -eq "s") {
-        Disconnect-MgGraph
-        Connect-MgGraph -Scopes "User.Read.All", "Directory.Read.All" -NoWelcome
-      }
-    }
-
-    $org = Get-MgOrganization
-    Write-Host "✅ Conectado ao tenant: $($org.DisplayName)" -ForegroundColor Green
-    return $true
+  if ($isConnected) {
+    Write-Host "🔄 Já conectado ao tenant: $((Get-MgOrganization).DisplayName)" -ForegroundColor Yellow
+    $choice += Read-Host "Deseja trocar de tenant? (S/N)"
   }
-  catch {
-    Write-Host "❌ Erro ao conectar ao tenant: $($_.Exception.Message)" -ForegroundColor DarkRed
-    return $false
+
+  if (-not $isConnected) {
+    Connect-MgGraph -Scopes "User.Read.All", "Directory.Read.All" -NoWelcome
+    Write-Host "🔄 Conectando ao Microsoft Entra ID..." -ForegroundColor Yellow
+  }
+
+  if ($choice.Trim().ToLower() -eq "s") {
+    Disconnect-MgGraph | Out-Null
+    Connect-MgGraph -Scopes "User.Read.All", "Directory.Read.All" -NoWelcome
+    Write-Host "✅ Conectado ao tenant: $((Get-MgOrganization).DisplayName)" -ForegroundColor Green
   }
 }
 
@@ -116,11 +111,8 @@ function Main {
   Write-Host "╚════════════════════════════════════════════════════════════════════╝" -ForegroundColor Cyan
   Write-Host ""
 
-  if (-not (ConnectToTenant)) {
-    Write-Host "❌ Não foi possível conectar ao tenant. Verifique suas credenciais e permissões." -ForegroundColor DarkRed
-    exit 1
-  }
-
+  VerifyTenantConnection
+  
   $usersWithLicenses, $usersWithoutLicenses = GetUsersWithLicenses
 
   if ($usersWithLicenses.Count -eq 0) {
@@ -147,7 +139,7 @@ function Main {
   }
 
   $orgName = (Get-MgOrganization).DisplayName
-  $sanitizedOrgName = Normalize-FileName $orgName
+  $sanitizedOrgName = NormalizeFileName $orgName
 
   $usersWithLicensesCsvPath = Join-Path $csvDir "${sanitizedOrgName}_${dateStr}_users_with_license.csv"
   $usersWithoutLicensesCsvPath = Join-Path $csvDir "${sanitizedOrgName}_${dateStr}_users_without_license.csv"
