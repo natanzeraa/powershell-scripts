@@ -1,3 +1,8 @@
+param(
+  [Parameter()]
+  [string]$tenant
+)
+
 function ShowProgressBar {
   param(
     [Parameter(Mandatory)]
@@ -78,29 +83,17 @@ function GetUsersWithLicenses {
   return $withLicenses, $withoutLicenses
 }
 
-function VerifyTenantConnection {
-  $mgContext = Get-MgContext
-  $isConnected = $mgContext.Account
-  $choice = ""
-
-  if ($isConnected) {
-    Write-Host "🔄 Já conectado ao tenant: $((Get-MgOrganization).DisplayName)" -ForegroundColor Yellow
-    $choice += Read-Host "Deseja trocar de tenant? (S/N)"
-  }
-
-  if (-not $isConnected) {
-    Connect-MgGraph -Scopes "User.Read.All", "Directory.Read.All" -NoWelcome
-    Write-Host "🔄 Conectando ao Microsoft Entra ID..." -ForegroundColor Yellow
-  }
-
-  if ($choice.Trim().ToLower() -eq "s") {
-    Disconnect-MgGraph | Out-Null
-    Connect-MgGraph -Scopes "User.Read.All", "Directory.Read.All" -NoWelcome
-    Write-Host "✅ Conectado ao tenant: $((Get-MgOrganization).DisplayName)" -ForegroundColor Green
-  }
+function OpenNewTenantConnection {
+  Disconnect-MgGraph | Out-Null
+  Connect-MgGraph -Scopes "User.Read.All", "Directory.Read.All" -NoWelcome
+  Write-Host "🔄 Conectando ao Microsoft Entra ID..." -ForegroundColor Yellow
+  return $context
 }
 
 function Main {
+
+  param([Parameter()][string]$tenant)
+
   Clear-Host
   Write-Host ""
   Write-Host "╔════════════════════════════════════════════════════════════════════╗" -ForegroundColor Cyan
@@ -111,7 +104,18 @@ function Main {
   Write-Host "╚════════════════════════════════════════════════════════════════════╝" -ForegroundColor Cyan
   Write-Host ""
 
-  VerifyTenantConnection
+  if (![string]::IsNullOrEmpty($tenant)) {
+    $context = OpenNewTenantConnection
+  }
+
+  $context = Get-MgContext
+
+  if (!$context.Account) {
+    Write-Host "❌ Não foi possível se conectar ao tenant" -ForegroundColor Red
+    exit 1
+  }
+
+  Write-Host "🔄 Conectado ao tenant: $((Get-MgOrganization).DisplayName)" -ForegroundColor Yellow
   
   $usersWithLicenses, $usersWithoutLicenses = GetUsersWithLicenses
 
@@ -154,9 +158,10 @@ function Main {
   Write-Host "💾 Exportado: $usersWithoutLicensesCsvPath"
 }
 
+
 try {
   $start = Get-Date
-  Main
+  Main -tenant $tenant
   $end = Get-Date
   $duration = $end - $start
   Write-Host "`n⏱️ Tempo total: $($duration.Hours)h $($duration.Minutes)m $($duration.Seconds)s"
