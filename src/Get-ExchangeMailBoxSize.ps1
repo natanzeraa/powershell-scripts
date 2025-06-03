@@ -1,30 +1,18 @@
 # - Acesse a documentação do script através do link abaixo 👇
 # - https://github.com/natanzeraa/scripts-and-automation/blob/main/README/PowerShell/GetExchangeMailBoxSize.md
 
-Clear-Host
-Write-Host "`nIniciando contagem de caixas de e-mail..." -ForegroundColor Gray
+param(
+    [Parameter()]
+    [string]$tenant
+)
 
-$mailboxes = Get-Mailbox -ResultSize Unlimited
-$mailboxesCount = $mailboxes.Count
-
-if ($mailboxesCount -eq 0) {
-    Write-Host "Nenhuma caixa de e-mail encontrada." -ForegroundColor Red
-    exit
-}
-
-$orgName = (Get-OrganizationConfig).DisplayName
-Write-Host "`nOrganização: $orgName" -ForegroundColor Gray
-Write-Host "`nTotal de caixas de e-mail: $mailboxesCount" -ForegroundColor Gray
-
-[int]$topRankingCount = Read-Host "`nQuantas caixas de e-mail mais ocupadas você deseja visualizar no ranking"
-
-function Show-Progress($current, $total) {
+function ShowProgress($current, $total) {
     Write-Progress -Activity "Coletando caixas de e-mail" `
         -Status "$current de $total processado(s) ($([math]::Round(($current / $total) * 100))%)" `
         -PercentComplete (($current / $total) * 100)
 }
 
-function Measure-AllMailboxesSize {
+function MeasureAllMailboxesSize {
     param (
         [Parameter(Mandatory)]
         $mailboxesData
@@ -37,7 +25,7 @@ function Measure-AllMailboxesSize {
     Write-Host "`nUso total de todas as $mailboxesCount caixas de e-mail: $totalBytes bytes (~$totalGB GB) (~$totalTB TB)" -ForegroundColor DarkYellow
 }
 
-function Measure-RankedMailboxesSize {
+function MeasureRankedMailboxesSize {
     param (
         [Parameter(Mandatory)]
         $mailboxesData,
@@ -53,7 +41,7 @@ function Measure-RankedMailboxesSize {
     Write-Host "`nUso total das $rankingCount maiores caixas de e-mail: $totalBytes bytes (~$totalGB GB) (~$totalTB TB)" -ForegroundColor DarkYellow
 }
 
-function Measure-MailboxesSizeMean {
+function MeasureMailboxesSizeMean {
     param (
         [Parameter(Mandatory)]
         $mailboxesData,
@@ -70,7 +58,7 @@ function Measure-MailboxesSizeMean {
     Write-Host "`nUso médio por caixa de e-mail: $mailboxesMedian bytes (~$totalGB GB) (~$totalTB TB)" -ForegroundColor DarkYellow
 }
 
-function Convert-StringToBytes {
+function ConvertStringToBytes {
     param (
         [Parameter(Mandatory)]
         [string]$prohibitSendQuota
@@ -91,17 +79,27 @@ function Convert-StringToBytes {
     }
 }
 
-function Get-MailboxUsageReport {
+function GetMailboxUsageReport {
+    param(
+        [Parameter(Mandatory)]
+        [int64]$ranking,
+
+        [Parameter(Mandatory)]
+        $mailboxes,
+
+        [Parameter(Mandatory)]
+        [int]$mailboxesCount
+    )
+
     $results = @()
     $current = 0
     $errors = @()
-    $startTime = Get-Date
 
     Write-Host "`nAguarde... coletando estatísticas...`n"
 
     foreach ($mailbox in $mailboxes) {
         $current++
-        Show-Progress -current $current -total $mailboxesCount
+        ShowProgress -current $current -total $mailboxesCount
 
         try {
             $stats = Get-MailboxStatistics -Identity $mailbox.Guid -ErrorAction Stop
@@ -112,7 +110,7 @@ function Get-MailboxUsageReport {
                 $bytes = if ($rawSize -match '\(([\d,]+)\sbytes\)') { [int64]($matches[1] -replace ',', '') } else { 0 }
                 
                 $prohibitSendQuota = $mailbox.ProhibitSendQuota
-                $quotaBytes = Convert-StringToBytes -prohibitSendQuota $prohibitSendQuota
+                $quotaBytes = ConvertStringToBytes -prohibitSendQuota $prohibitSendQuota
                 $percentUsed = if ($quotaBytes -gt 0) { [math]::Round(($bytes / $quotaBytes) * 100, 2) } else { 0 }
                 $freeGB = if ($quotaBytes -gt 0) { [math]::Round(($quotaBytes - $bytes) / 1GB, 2) } else { 0 } 
 
@@ -136,6 +134,72 @@ function Get-MailboxUsageReport {
         }
     }
 
+    return $results, $errors
+}
+
+function OpenNewTenantConnection {
+    try {
+        $context = Get-MgContext
+        if ($context.Account) {
+            Disconnect-ExchangeOnline | Out-Null
+        }
+        
+        Write-Host "`n🔐 Autenticação necessária!" -ForegroundColor Cyan
+        Write-Host "Será aberta uma URL para você autenticar usando um código de dispositivo." -ForegroundColor Gray
+        Write-Host "Caso não apareça automaticamente, acesse https://microsoft.com/devicelogin manualmente." -ForegroundColor Gray
+        Write-Host ""
+
+        Connect-ExchangeOnline -UserPrincipalName $tenant -ShowBanner:$false -Device 
+
+        Write-Host "🔄 Conectando ao Exchange Online..." -ForegroundColor Yellow
+    }
+    catch {
+        Write-Host "Erro o conectar com o Exchange: $($_.Exception.Message)" -ForegroundColor DarkRed
+        exit 1
+    }
+}
+
+function Main {
+    Clear-Host
+    Write-Host ""
+    Write-Host "╔═════════════════════════════════════════════════════════════════════════╗" -ForegroundColor Cyan
+    Write-Host "║              🪟 Microsoft Entra ID - Ranking de caixas de email          ║" -ForegroundColor Cyan
+    Write-Host "║-------------------------------------------------------------------------║" -ForegroundColor Cyan
+    Write-Host "║ Autor      : Natan Felipe de Oliveira                                   ║" -ForegroundColor Cyan
+    Write-Host "║ Descrição  : Exibe um ranking de caixas de email ordenadas por tamanho  ║" -ForegroundColor Cyan
+    Write-Host "╚═════════════════════════════════════════════════════════════════════════╝" -ForegroundColor Cyan
+    Write-Host ""
+
+    if (![string]::IsNullOrEmpty($tenant)) {
+        OpenNewTenantConnection
+    }
+
+    $context = Get-MgContext
+
+    if (!$context.Account) {
+        Write-Host "❌ Não foi possível se conectar ao tenant" -ForegroundColor Red
+        exit 1
+    }
+
+    Write-Host "🔄 Conectado ao tenant: $((Get-MgOrganization).DisplayName)" -ForegroundColor Yellow
+    Write-Host "`nIniciando contagem de caixas de e-mail..." -ForegroundColor Gray
+
+    $mailboxes = Get-Mailbox -ResultSize Unlimited
+    $mailboxesCount = $mailboxes.Count
+
+    if ($mailboxesCount -eq 0) {
+        Write-Host "Nenhuma caixa de e-mail encontrada." -ForegroundColor Red
+        exit
+    }
+
+    $orgName = (Get-OrganizationConfig).DisplayName
+    Write-Host "`nOrganização: $orgName" -ForegroundColor Gray
+    Write-Host "`nTotal de caixas de e-mail: $mailboxesCount" -ForegroundColor Gray
+
+    [int]$topRankingCount = Read-Host "`nQuantas caixas de e-mail mais ocupadas você deseja visualizar no ranking"
+
+    $results, $errors = GetMailboxUsageReport -ranking $topRankingCount -mailboxes $mailboxes -mailboxesCount $mailboxesCount
+
     Write-Progress -Activity "Coletando caixas de e-mail" -Completed
 
     $topMailboxes = $results | Sort-Object -Property ByteSize -Descending | Select-Object -First $topRankingCount
@@ -157,9 +221,9 @@ function Get-MailboxUsageReport {
     Write-Host "`nTop $topRankingCount caixas de e-mail mais ocupadas:`n" -ForegroundColor Yellow
     $rankedTopMailboxes | Format-Table -AutoSize
 
-    Measure-RankedMailboxesSize -mailboxesData $topMailboxes -rankingCount $topRankingCount
-    Measure-AllMailboxesSize -mailboxesData $results
-    Measure-MailboxesSizeMean -mailboxesData $results -totalMailboxesCount $mailboxesCount
+    MeasureRankedMailboxesSize -mailboxesData $topMailboxes -rankingCount $topRankingCount
+    MeasureAllMailboxesSize -mailboxesData $results
+    MeasureMailboxesSizeMean -mailboxesData $results -totalMailboxesCount $mailboxesCount
 
     $csvDir = Join-Path $PSScriptRoot "..\output"
     if (-not (Test-Path $csvDir)) {
@@ -168,11 +232,8 @@ function Get-MailboxUsageReport {
 
     $csvPath = Join-Path $csvDir "top_${topRankingCount}_caixas_de_email.csv"
 
-    $topMailboxes | Select-Object Name, Email, Size, Quota, Usage, Free, Enviados | Export-Csv -Path $csvPath -NoTypeInformation -Encoding utf8
+    $topMailboxes | Select-Object Name, Email, Size, Quota, Usage, Free, Sent | Export-Csv -Path $csvPath -NoTypeInformation -Encoding utf8
     Write-Host "`nResultado exportado para: $csvPath" -ForegroundColor Green
-
-    $duration = (Get-Date) - $startTime
-    Write-Host "`nDuração: $($duration.Hours)h $($duration.Minutes)m $($duration.Seconds)s`n" -ForegroundColor DarkCyan
 
     if ($errors.Count -gt 0) {
         Write-Host "`n[ERRO] Erros durante a coleta:" -ForegroundColor Red
@@ -180,4 +241,13 @@ function Get-MailboxUsageReport {
     }
 }
 
-Get-MailboxUsageReport
+try {
+    $start = Get-Date
+    Main -tenant $tenant
+    $time = (Get-Date) - $start
+    Write-Host ("Tempo: {0:hh\:mm\:ss}" -f $time)
+}
+catch {
+    Write-Host "❌ Erro: $($_.Exception.Message)" -ForegroundColor DarkRed
+    exit 1
+}
