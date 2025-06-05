@@ -7,26 +7,40 @@ param(
 )
 
 function OpenNewTenantConnection {
-    $context = Get-MgContext
-    Write-Host "Foi encontrada uma sessão previamente aberta: $(($context).Account)"
-    
-    if ($context.Account) {
-        Write-Host "Encerrando sessão..."
-        Disconnect-ExchangeOnline | Out-Null
+    try {
+        Write-Host "`n🔍 Verificando sessões existentes..." -ForegroundColor Yellow
+        $graphContext = Get-MgContext
+
+        if ($graphContext.Account) {
+            Write-Host "Encerrando sessão do Microsoft Graph: $($graphContext.Account)"
+            Disconnect-MgGraph | Out-Null
+        }
     }
-    
+    catch {
+        Write-Host "Não foi possível verificar sessão do Graph." -ForegroundColor DarkRed
+        exit 1
+    }
+
+    try {
+        Disconnect-ExchangeOnline -Confirm:$false -ErrorAction SilentlyContinue
+    }
+    catch {
+        Write-Host "Não foi possível encerrar sessão do Exchange Online." -ForegroundColor DarkRed
+        exit 1
+    }
+
     Write-Host "`n🔐 Autenticação necessária!" -ForegroundColor Cyan
-    Write-Host "Será aberta uma URL para você autenticar usando um código de dispositivo." -ForegroundColor Gray
-    Write-Host "Caso não apareça automaticamente, acesse https://microsoft.com/devicelogin manualmente." -ForegroundColor Gray
+    Write-Host "Será aberta uma URL para você autenticar usando um código de dispositivo."
+    Write-Host "Caso não apareça automaticamente, acesse https://microsoft.com/devicelogin manualmente."
     Write-Host ""
 
     try {
-        Connect-ExchangeOnline -UserPrincipalName $tenant -ShowBanner:$false -Device 
+        Connect-ExchangeOnline -UserPrincipalName $tenant -ShowBanner:$false -Device
         Connect-MgGraph -Scopes "User.Read.All", "Directory.Read.All" -NoWelcome
-        Write-Host "🔄 Conectando ao Exchange Online..." -ForegroundColor Yellow
+        Write-Host "🔄 Conectado ao Exchange Online com: $tenant" -ForegroundColor Yellow
     }
     catch {
-        Write-Host "Erro o conectar com o Exchange: $($_.Exception.Message)" -ForegroundColor DarkRed
+        Write-Host "Erro ao conectar com o Exchange: $($_.Exception.Message)" -ForegroundColor DarkRed
         exit 1
     }
 }
@@ -35,9 +49,11 @@ function CheckExistentContext {
     $context = Get-MgContext
     
     if (!$context.Account) {
-        Write-Host "❌ Não foi possível se conectar ao tenant" -ForegroundColor Red
+        Write-Host "❌ Não foi possível se conectar ao tenant" -ForegroundColor DarkRed
         exit 1
     }
+
+    return $context
 }
 
 function CountMailBoxes {
@@ -45,9 +61,11 @@ function CountMailBoxes {
     $mailboxesCount = $mailboxes.Count
 
     if ($mailboxesCount -eq 0) {
-        Write-Host "Nenhuma caixa de e-mail encontrada." -ForegroundColor Red
-        exit
+        Write-Host "Nenhuma caixa de e-mail encontrada." -ForegroundColor DarkRed
+        exit 1
     }
+
+    Write-Host "`nTotal de caixas de e-mail: $mailboxesCount"
 
     return $mailboxes, $mailboxesCount
 }
@@ -224,16 +242,13 @@ function Main {
         OpenNewTenantConnection
     }
 
-    CheckExistentContext
+    $context = CheckExistentContext
     
     Write-Host "Sessão iniciada em: $(($context).Account)"
     Write-Host "`nConectado ao tenant: $((Get-MgOrganization).DisplayName)"
-    Write-Host "`nIniciando contagem de caixas de e-mail..." -ForegroundColor Gray
+    Write-Host "`nIniciando contagem de caixas de e-mail..."
 
     $mailboxes, $mailboxesCount = CountMailBoxes
-
-    Write-Host "`nOrganização:$((Get-OrganizationConfig).DisplayName)" -ForegroundColor Gray
-    Write-Host "`nTotal de caixas de e-mail: $mailboxesCount" -ForegroundColor Gray
 
     [int]$topRankingCount = Read-Host "`nQuantas caixas de e-mail mais ocupadas você deseja visualizar no ranking"
 
@@ -267,8 +282,8 @@ function Main {
     Write-Host "`nResultado exportado para: $path" -ForegroundColor Green
 
     if ($errors.Count -gt 0) {
-        Write-Host "`n[ERRO] Erros durante a coleta:" -ForegroundColor Red
-        $errors | ForEach-Object { Write-Host $_ -ForegroundColor Red }
+        Write-Host "`n[ERRO] Erros durante a coleta:" -ForegroundColor DarkRed
+        $errors | ForEach-Object { Write-Host $_ -ForegroundColor DarkRed }
     }
 }
 
