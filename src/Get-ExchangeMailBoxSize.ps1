@@ -6,6 +6,52 @@ param(
     [string]$tenant
 )
 
+function OpenNewTenantConnection {
+    $context = Get-MgContext
+    Write-Host "Foi encontrada uma sessão previamente aberta: $(($context).Account)"
+    
+    if ($context.Account) {
+        Write-Host "Encerrando sessão..."
+        Disconnect-ExchangeOnline | Out-Null
+    }
+    
+    Write-Host "`n🔐 Autenticação necessária!" -ForegroundColor Cyan
+    Write-Host "Será aberta uma URL para você autenticar usando um código de dispositivo." -ForegroundColor Gray
+    Write-Host "Caso não apareça automaticamente, acesse https://microsoft.com/devicelogin manualmente." -ForegroundColor Gray
+    Write-Host ""
+
+    try {
+        Connect-ExchangeOnline -UserPrincipalName $tenant -ShowBanner:$false -Device 
+        Connect-MgGraph -Scopes "User.Read.All", "Directory.Read.All" -NoWelcome
+        Write-Host "🔄 Conectando ao Exchange Online..." -ForegroundColor Yellow
+    }
+    catch {
+        Write-Host "Erro o conectar com o Exchange: $($_.Exception.Message)" -ForegroundColor DarkRed
+        exit 1
+    }
+}
+
+function CheckExistentContext {
+    $context = Get-MgContext
+    
+    if (!$context.Account) {
+        Write-Host "❌ Não foi possível se conectar ao tenant" -ForegroundColor Red
+        exit 1
+    }
+}
+
+function CountMailBoxes {
+    $mailboxes = Get-Mailbox -ResultSize Unlimited
+    $mailboxesCount = $mailboxes.Count
+
+    if ($mailboxesCount -eq 0) {
+        Write-Host "Nenhuma caixa de e-mail encontrada." -ForegroundColor Red
+        exit
+    }
+
+    return $mailboxes, $mailboxesCount
+}
+
 function ShowProgress($current, $total) {
     Write-Progress -Activity "Coletando caixas de e-mail" `
         -Status "$current de $total processado(s) ($([math]::Round(($current / $total) * 100))%)" `
@@ -137,26 +183,30 @@ function GetMailboxUsageReport {
     return $results, $errors
 }
 
-function OpenNewTenantConnection {
-    try {
-        $context = Get-MgContext
-        if ($context.Account) {
-            Disconnect-ExchangeOnline | Out-Null
-        }
-        
-        Write-Host "`n🔐 Autenticação necessária!" -ForegroundColor Cyan
-        Write-Host "Será aberta uma URL para você autenticar usando um código de dispositivo." -ForegroundColor Gray
-        Write-Host "Caso não apareça automaticamente, acesse https://microsoft.com/devicelogin manualmente." -ForegroundColor Gray
-        Write-Host ""
+function NormalizeFileName {
+    param([string]$str)
 
-        Connect-ExchangeOnline -UserPrincipalName $tenant -ShowBanner:$false -Device 
+    $normalized = $str.Normalize([System.Text.NormalizationForm]::FormD)
+    $asciiOnly = -join ($normalized.ToCharArray() | Where-Object {
+            [System.Globalization.CharUnicodeInfo]::GetUnicodeCategory($_) -ne 'NonSpacingMark'
+        })
 
-        Write-Host "🔄 Conectando ao Exchange Online..." -ForegroundColor Yellow
+    return $asciiOnly.ToLower() -replace '[^a-z0-9]+', '_'
+}
+
+function CreateAndSaveCsvToOrgFolder {
+    $orgName = (Get-MgOrganization).DisplayName
+
+    $normalizedOrgName = NormalizeFileName -str $orgName
+
+    $folderPath = Join-Path $PSScriptRoot "..\$normalizedOrgName"
+    
+    if (-not (Test-Path $folderPath)) {
+        New-Item -Path $folderPath -ItemType Directory | Out-Null
     }
-    catch {
-        Write-Host "Erro o conectar com o Exchange: $($_.Exception.Message)" -ForegroundColor DarkRed
-        exit 1
-    }
+    
+    $path = Join-Path $folderPath "${normalizedOrgName}_top_${topRankingCount}_caixas_de_email.csv"
+    return $path
 }
 
 function Main {
@@ -174,33 +224,20 @@ function Main {
         OpenNewTenantConnection
     }
 
-    $context = Get-MgContext
-
-    if (!$context.Account) {
-        Write-Host "❌ Não foi possível se conectar ao tenant" -ForegroundColor Red
-        exit 1
-    }
-
-    Write-Host "🔄 Conectado ao tenant: $((Get-MgOrganization).DisplayName)" -ForegroundColor Yellow
+    CheckExistentContext
+    
+    Write-Host "Sessão iniciada em: $(($context).Account)"
+    Write-Host "`nConectado ao tenant: $((Get-MgOrganization).DisplayName)"
     Write-Host "`nIniciando contagem de caixas de e-mail..." -ForegroundColor Gray
 
-    $mailboxes = Get-Mailbox -ResultSize Unlimited
-    $mailboxesCount = $mailboxes.Count
+    $mailboxes, $mailboxesCount = CountMailBoxes
 
-    if ($mailboxesCount -eq 0) {
-        Write-Host "Nenhuma caixa de e-mail encontrada." -ForegroundColor Red
-        exit
-    }
-
-    $orgName = (Get-OrganizationConfig).DisplayName
-    Write-Host "`nOrganização: $orgName" -ForegroundColor Gray
+    Write-Host "`nOrganização:$((Get-OrganizationConfig).DisplayName)" -ForegroundColor Gray
     Write-Host "`nTotal de caixas de e-mail: $mailboxesCount" -ForegroundColor Gray
 
     [int]$topRankingCount = Read-Host "`nQuantas caixas de e-mail mais ocupadas você deseja visualizar no ranking"
 
     $results, $errors = GetMailboxUsageReport -ranking $topRankingCount -mailboxes $mailboxes -mailboxesCount $mailboxesCount
-
-    Write-Progress -Activity "Coletando caixas de e-mail" -Completed
 
     $topMailboxes = $results | Sort-Object -Property ByteSize -Descending | Select-Object -First $topRankingCount
 
@@ -224,16 +261,10 @@ function Main {
     MeasureRankedMailboxesSize -mailboxesData $topMailboxes -rankingCount $topRankingCount
     MeasureAllMailboxesSize -mailboxesData $results
     MeasureMailboxesSizeMean -mailboxesData $results -totalMailboxesCount $mailboxesCount
-
-    $csvDir = Join-Path $PSScriptRoot "..\output"
-    if (-not (Test-Path $csvDir)) {
-        New-Item -Path $csvDir -ItemType Directory | Out-Null
-    }
-
-    $csvPath = Join-Path $csvDir "top_${topRankingCount}_caixas_de_email.csv"
-
-    $topMailboxes | Select-Object Name, Email, Size, Quota, Usage, Free, Sent | Export-Csv -Path $csvPath -NoTypeInformation -Encoding utf8
-    Write-Host "`nResultado exportado para: $csvPath" -ForegroundColor Green
+    
+    $path = CreateAndSaveCsvToOrgFolder
+    $topMailboxes | Select-Object Name, Email, Size, Quota, Usage, Free, Sent | Export-Csv -Path $path -NoTypeInformation -Encoding utf8
+    Write-Host "`nResultado exportado para: $path" -ForegroundColor Green
 
     if ($errors.Count -gt 0) {
         Write-Host "`n[ERRO] Erros durante a coleta:" -ForegroundColor Red
