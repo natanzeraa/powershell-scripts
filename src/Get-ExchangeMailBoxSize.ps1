@@ -1,9 +1,9 @@
-# - Acesse a documentação do script através do link abaixo 👇
-# - https://github.com/natanzeraa/scripts-and-automation/blob/main/README/PowerShell/GetExchangeMailBoxSize.md
-
 param(
     [Parameter()]
-    [string]$tenant
+    [string]$tenant,
+
+    [Parameter()]
+    [string]$mailbox
 )
 
 function OpenNewTenantConnection {
@@ -57,16 +57,20 @@ function CheckExistentContext {
 }
 
 function CountMailBoxes {
-    $mailboxes = Get-Mailbox -ResultSize Unlimited
-    $mailboxesCount = $mailboxes.Count
+    if ($mailbox) {
+        $mailboxes = Get-Mailbox -Identity $mailbox -ErrorAction Stop
+    }
+    else {
+        $mailboxes = Get-Mailbox -ResultSize Unlimited
+    }
 
+    $mailboxesCount = $mailboxes.Count
     if ($mailboxesCount -eq 0) {
         Write-Host "Nenhuma caixa de e-mail encontrada." -ForegroundColor DarkRed
         exit 1
     }
 
     Write-Host "`nTotal de caixas de e-mail: $mailboxesCount"
-
     return $mailboxes, $mailboxesCount
 }
 
@@ -231,7 +235,7 @@ function Main {
     Clear-Host
     Write-Host ""
     Write-Host "╔═════════════════════════════════════════════════════════════════════════╗" -ForegroundColor Cyan
-    Write-Host "║              🪟 Microsoft Entra ID - Ranking de caixas de email          ║" -ForegroundColor Cyan
+    Write-Host "║ Microsoft Entra ID - Ranking de caixas de email                         ║" -ForegroundColor Cyan
     Write-Host "║-------------------------------------------------------------------------║" -ForegroundColor Cyan
     Write-Host "║ Autor      : Natan Felipe de Oliveira                                   ║" -ForegroundColor Cyan
     Write-Host "║ Descrição  : Exibe um ranking de caixas de email ordenadas por tamanho  ║" -ForegroundColor Cyan
@@ -250,7 +254,13 @@ function Main {
 
     $mailboxes, $mailboxesCount = CountMailBoxes
 
-    [int]$topRankingCount = Read-Host "`nQuantas caixas de e-mail mais ocupadas você deseja visualizar no ranking"
+    if ($mailbox) {
+        # Se rodar para apenas 1 caixa, não precisa ranking
+        $topRankingCount = 1
+    }
+    else {
+        [int]$topRankingCount = Read-Host "`nQuantas caixas de e-mail mais ocupadas você deseja visualizar no ranking"
+    }
 
     $results, $errors = GetMailboxUsageReport -ranking $topRankingCount -mailboxes $mailboxes -mailboxesCount $mailboxesCount
 
@@ -270,7 +280,7 @@ function Main {
         $i++
     }
     
-    Write-Host "`nTop $topRankingCount caixas de e-mail mais ocupadas:`n" -ForegroundColor Yellow
+    Write-Host "`nResultado:`n" -ForegroundColor Yellow
     $rankedTopMailboxes | Format-Table -AutoSize
 
     MeasureRankedMailboxesSize -mailboxesData $topMailboxes -rankingCount $topRankingCount
@@ -289,7 +299,7 @@ function Main {
 
 try {
     $start = Get-Date
-    Main -tenant $tenant
+    Main -tenant $tenant -mailbox $mailbox
     $time = (Get-Date) - $start
     Write-Host ("Tempo: {0:hh\:mm\:ss}" -f $time)
 }
